@@ -1,10 +1,15 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, render_template, redirect, url_for, session
 import math
 import random
 import datetime
 from collections import Counter
 
 app = Flask(__name__)
+app.secret_key = "secret123"
+
+# Authority credentials
+USERNAME = "admin"
+PASSWORD = "admin123"
 
 # =========================
 # IN-MEMORY DATA
@@ -150,7 +155,7 @@ def dual_source_truth_engine(feedback, sensor):
         wifi_fluctuation * 5
     )
 
-    fusion_score = round((human_anomaly * 0.55) + (sensor_anomaly * 0.45), 2)
+    fusion_score = round(min(100, (human_anomaly * 0.55) + (sensor_anomaly * 0.45)), 2)
 
     if human_anomaly > 35 and sensor_anomaly > 35:
         confidence = "High"
@@ -189,14 +194,13 @@ def predictive_civic_stress_map(location, emotional_intensity, fusion_score):
     if same_loc:
         avg_hist_score = sum(i["fusion"]["fusionScore"] for i in same_loc) / len(same_loc)
 
-    predicted_stress = round(
+    predicted_stress = round(min(100,
         fusion_score * 0.55 +
         emotional_intensity * 4 +
-        hist_count * 3 +
-        unresolved_count * 5 +
-        avg_hist_score * 0.12,
-        2
-    )
+        hist_count * 5 +
+        unresolved_count * 8 +
+        avg_hist_score * 0.2
+    ), 2)
 
     if predicted_stress >= 80:
         zone = "Critical"
@@ -594,8 +598,11 @@ def index():
       CitiSense+ AURA
       <small>Unified Public-Space Intelligence Platform</small>
     </div>
+    <div style="display:flex; gap:10px;">
     <button class="btn btn-secondary" onclick="goHome()">Home</button>
+    <button class="btn btn-danger" onclick="logout()">Logout</button>
   </div>
+</div>
 
   <div class="container">
     <div id="landing">
@@ -625,7 +632,7 @@ def index():
             Review live issues, predictive alerts, civic stress zones, heatmap layers, AI assignment,
             public accountability logs, and submit proof-of-resolution using geofenced verification.
           </p>
-          <button class="btn btn-primary" onclick="openAuthority()">Enter Authority Portal</button>
+          <button class="btn btn-primary" onclick="openLogin()">Enter Authority Portal</button>
         </div>
       </div>
     </div>
@@ -834,7 +841,29 @@ def index():
     </div>
   </div>
 
+<div id="loginView" class="hidden">
+  <div class="hero">
+    <h1>Authority Login</h1>
+    <p>Login to access dashboard</p>
+  </div>
+
+  <div class="card" style="max-width:400px;margin:auto;">
+    <label>Username</label>
+    <input id="loginUsername" placeholder="Enter username">
+
+    <label>Password</label>
+    <input id="loginPassword" type="password" placeholder="Enter password">
+
+    <div class="actions">
+      <button class="btn btn-primary" onclick="login()">Login</button>
+    </div>
+
+    <div id="loginResult" style="margin-top:10px;"></div>
+  </div>
+</div>
+
   <script>
+
     let citizenImage = "";
     let authorityImage = "";
     let citizenGeo = null;
@@ -845,6 +874,40 @@ def index():
     let departmentChartRef = null;
     let qrScanner = null;
 
+   function openLogin() {
+    document.getElementById("landing").classList.add("hidden");
+    document.getElementById("citizenView").classList.add("hidden");
+    document.getElementById("authorityView").classList.add("hidden");
+    document.getElementById("loginView").classList.remove("hidden");
+  }
+
+  async function login() {
+   const username = document.getElementById("loginUsername").value;
+   const password = document.getElementById("loginPassword").value;
+
+   const res = await fetch("/login", {
+  method: "POST",
+  headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({username, password}),
+  credentials: "same-origin"
+});
+   const data = await res.json();
+
+   if (res.status === 200) {
+     document.getElementById("loginResult").innerHTML =
+       "<span style='color:green'>Login successful</span>";
+     openAuthority();
+   } else {
+     document.getElementById("loginResult").innerHTML =
+       "<span style='color:red'>Invalid credentials</span>";
+   }
+ }
+async function logout() {
+  await fetch("/logout", {
+    credentials: "same-origin"
+  });
+  location.reload(); // go back to home page
+}
     function goHome() {
       document.getElementById("landing").classList.remove("hidden");
       document.getElementById("citizenView").classList.add("hidden");
@@ -860,13 +923,23 @@ def index():
       startQrScanner();
     }
 
-    async function openAuthority() {
-      document.getElementById("landing").classList.add("hidden");
-      document.getElementById("citizenView").classList.add("hidden");
-      document.getElementById("authorityView").classList.remove("hidden");
-      stopQrScanner();
-      await refreshAuthority();
-    }
+     async function openAuthority() {
+  const res = await fetch("/api/dashboard", {
+    credentials: "same-origin"
+  });
+
+  if (res.status === 401) {
+    alert("Please login first");
+    openLogin();
+    return;
+  }
+
+  document.getElementById("landing").classList.add("hidden");
+  document.getElementById("citizenView").classList.add("hidden");
+  document.getElementById("authorityView").classList.remove("hidden");
+
+  await refreshAuthority();
+}
 
     function prefillDemo() {
       document.getElementById("location").value = "canteen";
@@ -1019,7 +1092,7 @@ def index():
     }
 
     async function refreshAuthority() {
-      const res = await fetch("/api/dashboard");
+      const res = await fetch("/api/dashboard", { credentials: "same-origin" })
       const data = await res.json();
 
       document.getElementById("statOpen").innerText = data.stats.openIssues;
@@ -1163,12 +1236,12 @@ def index():
         authorityGeo: authorityGeo
       };
 
-      const res = await fetch("/api/resolve", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload)
-      });
-
+        const res = await fetch("/api/resolve", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload),   // ← comma needed
+          credentials: "same-origin"
+        });
       const data = await res.json();
       document.getElementById("resolutionResult").innerHTML = `
         <div class="issue-card">
@@ -1297,6 +1370,9 @@ def create_issue():
 
 @app.route("/api/dashboard", methods=["GET"])
 def dashboard():
+    if not session.get('authority_logged_in'):
+        return jsonify({"error": "Unauthorized"}), 401
+
     open_issues = [i for i in issues if i["status"] != "Resolved"]
     critical_zones = sum(1 for i in open_issues if i["prediction"]["predictedZone"] == "Critical")
     sla_risks = sum(1 for i in open_issues if i["slaPredictiveAlert"]["riskOfBreachWithin72Hours"])
@@ -1334,7 +1410,11 @@ def get_public_log():
 
 @app.route("/api/resolve", methods=["POST"])
 def resolve_issue():
+    if not session.get('authority_logged_in'):
+     return jsonify({"error": "Unauthorized"}), 401
+  
     data = request.get_json(force=True)
+
     issue_id = int(data.get("issueId", 0))
     note = data.get("note", "").strip()
     proof_image = data.get("proofImage", "")
@@ -1347,10 +1427,15 @@ def resolve_issue():
     if not authority_geo or "lat" not in authority_geo or "lon" not in authority_geo:
         return jsonify({"message": "Authority geolocation is required for proof-of-resolution"}), 400
 
-    dist = distance_meters(issue["lat"], issue["lon"], authority_geo["lat"], authority_geo["lon"])
+    dist = distance_meters(
+        issue["lat"], issue["lon"],
+        authority_geo["lat"], authority_geo["lon"]
+    )
+
     geo_verified = dist <= 120.0
 
     issue["status"] = "Resolved" if geo_verified else "Resolution Pending Verification"
+
     issue["resolution"] = {
         "note": note,
         "proofImage": proof_image,
@@ -1358,7 +1443,7 @@ def resolve_issue():
         "distanceMeters": dist,
         "geoVerified": geo_verified,
         "resolvedAt": now_iso()
-    }
+    }		
 
     add_public_log(
         issue["id"],
@@ -1374,9 +1459,36 @@ def resolve_issue():
         "issue": issue
     })
 
-
 # =========================
 # RUN
 # =========================
+
+
+# =========================
+# AUTH ROUTES
+# =========================
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    username = data.get("username")
+    password = data.get("password")
+
+    if username == USERNAME and password == PASSWORD:
+        session['authority_logged_in'] = True
+        return jsonify({"message": "Login successful"})
+    else:
+        return jsonify({"message": "Invalid credentials"}), 401
+
+
+@app.route("/logout")
+def logout():
+    session.pop('authority_logged_in', None)
+    return redirect("/")
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
+
+
+
